@@ -1,0 +1,4 @@
+[submodule "std-mk"]
+	path = std-mk
+	url = https://github.com/kstr0k/release-batch-dlupd.git
+	branch = std-mk
