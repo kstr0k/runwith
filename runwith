@@ -1,0 +1,170 @@
+#!/bin/sh
+# shellcheck shell=dash
+
+set -u
+_X_me=$(readlink -f "$0")
+
+_O_builtins=false  # restrict to builtins; '--builtin' sets it
+
+# runwith patch_builtins
+_X_builtins='exec eval set exit quiet svfd herestr aft confirm argv0 cd cdp git_top pathpfx pathsfx venv tac head tail aft_tac aft_head aft_tail glob ifsjoin builtins patch_builtins '
+
+# intercepts exec runwith to use internal
+__runwith_exec() {
+  case "$1" in
+    (runwith) "$@"; exit "$?" ;;
+    (*) exec "$@" ;;
+  esac
+}
+
+__runwith_eval() {
+  eval "$1"; shift 1
+  __runwith_exec "$@"
+}
+__runwith_set() {
+  set=$1; shift
+  set "$set"; __runwith_exec "$@"
+}
+__runwith_exit() {
+  sts=$1; shift
+  (__runwith_exec "$@"); exit "$sts"
+}
+
+__runwith_quiet() {
+  __runwith_exec "$@" >/dev/null 2>&1
+}
+__runwith_svfd() {
+  local sv0 sv1 sv2; sv0=$1; sv1=$2; sv2=$3; shift 3
+  eval "exec $sv0<&0 $sv1>&1 $sv2>&2"
+  __runwith_exec "$@"
+}
+__runwith_herestr() {
+  local str=$1; shift
+  printf %s "$str" | __runwith_exec "$@"
+}
+
+__runwith_aft() {
+  arg=$1; shift
+  runwith "aft_$arg" "$@"
+}
+
+__runwith_confirm() {
+  local prompt=${1:-'Proceed (y/N)? '}; shift
+  printf >&2 %s "$prompt"
+  local ans; IFS= read -r ans
+  case "$ans" in
+    (y|Y) __runwith_exec "$@" ;;
+    (*) ;;
+  esac
+}
+__runwith_argv0() {
+  exec bash -c 'exec -a "$0" "$@"' "$@"
+}
+__runwith_cd() {
+  cd "$1" || exit "$?"; shift; __runwith_exec "$@"
+}
+__runwith_cdp() {
+  cd -P "$1" || exit "$?"; shift; __runwith_exec "$@"
+}
+__runwith_git_top() {
+  runwith cdp "$(git rev-parse --show-toplevel)" "$@"
+}
+__runwith_pathpfx() {
+  export PATH="$1:$PATH"; shift
+  __runwith_exec "$@"
+}
+__runwith_pathsfx() {
+  export PATH="$PATH:$1"; shift
+  __runwith_exec "$@"
+}
+__runwith_venv() {
+  # shellcheck disable=SC1091
+  . "$1"/bin/activate; shift;
+  __runwith_exec "$@"
+}
+__runwith_tac() {
+  exec tac | __runwith_exec "$@"
+}
+__runwith_head() {
+  local n; n=$1; shift
+  exec head -n "$n" | __runwith_exec "$@"
+}
+__runwith_tail() {
+  local n; n=$1; shift
+  exec tail -n "$n" | __runwith_exec "$@"
+}
+__runwith_aft_tac() {
+  __runwith_exec "$@" | exec tac
+}
+__runwith_aft_head() {
+  local n; n=$1; shift
+  __runwith_exec "$@" | exec head -n "$n"
+}
+__runwith_aft_tail() {
+  local n; n=$1; shift
+  __runwith_exec "$@" | exec tail -n "$n"
+}
+__runwith_glob() {
+  local glob; glob=$1; shift
+  # shellcheck disable=SC2086
+  local f; for f in $glob; do ! [ -e "$f" ] || set -- "$@" "$f"; done
+  __runwith_exec "$@"
+}
+__runwith_ifsjoin() {
+  IFS=$1; shift
+  printf %s "$*"; exit "$?"
+}
+__runwith_builtins() {
+  printf %s "$_X_builtins" | tr ' ' '\n'
+}
+__runwith_patch_builtins() {
+  local builtins; builtins=$(sed -ne 's/^__runwith_\(.*\)(.*/\1/p' <~/bin/runwith | tr '\n' ' ')
+  [ "$builtins" = "$_X_builtins" ] ||
+    sed -i "$_X_me" -e "/^_X_builtins=/s!=.*!='$builtins'!"
+}
+
+runwith() {
+  local arg; arg=$1; shift
+  if "$_O_builtins"; then
+    case " $_X_builtins" in
+      (*" $arg "*) ;;
+      (*) printf %s\\n >&2 "Not a builtin: $arg"; exit 1 ;;
+    esac
+  fi
+  case "$arg" in
+    (__runwith_*) ;;
+    (*) arg=__runwith_"$arg" ;;
+  esac
+  "$arg" "$@"
+}
+
+usage() {
+  cat <<'EOMSG'
+Usage: runwith [OPTION]... RESOURCE... CMD...
+Options:
+  --builtin, --no-builtin, --builtin={ true | false }
+    only allow builtins; otherwise external __runwith_* allowed
+
+*Resources*
+External:
+  create __runwith_* in $PATH
+Builtins:
+EOMSG
+  __runwith_builtins | xargs -d'\n' -n 7 echo '  '
+  exit 0
+}
+
+main() {
+  while [ 0 != "$#" ]; do
+    case "$1" in
+      (-h|--help) usage "$@" ;;
+      (--builtin|--builtin=true)     shift; _O_builtins=true ;;
+      (--no-builtin|--builtin=false) shift; _O_builtins=false ;;
+      (--) shift; break ;;
+      (*) break ;;
+    esac
+  done
+  runwith "$@"
+}
+
+main "$@"
